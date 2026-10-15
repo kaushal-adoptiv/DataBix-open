@@ -84,8 +84,13 @@ mongo_client: MongoClient = MongoClient(
     MONGO_URI,
     serverSelectionTimeoutMS=2000,
 )
+# Short timeouts: the cache is optional, so a slow Redis must not stall requests.
 redis_client: Redis = Redis.from_url(
-    REDIS_URL, password=REDIS_PASSWORD, decode_responses=True
+    REDIS_URL,
+    password=REDIS_PASSWORD,
+    decode_responses=True,
+    socket_connect_timeout=2,
+    socket_timeout=2,
 )
 
 

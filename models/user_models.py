@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Integer, String, false
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, Integer, String, false
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -14,3 +16,5 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=false(), nullable=False
     )
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

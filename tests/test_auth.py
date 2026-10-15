@@ -228,5 +228,6 @@ def test_upgrade_schema_tolerates_losing_a_concurrent_upgrade(
     monkeypatch.setattr(schema_module, "_has_column", has_column_after_race)
     upgrade_schema(engine)
 
-    assert len(calls) == 2
+    # The ALTER for is_admin failed as a duplicate and the re-check accepted it.
+    assert calls[:2] == ["is_admin", "is_admin"]
     engine.dispose()

@@ -44,7 +44,7 @@ def get_current_user(db: DatabaseSession, token: BearerToken) -> User:
             options={"require": ["exp", "sub"]},
         )
         username = payload.get("sub")
-        if not isinstance(username, str):
+        if not isinstance(username, str) or payload.get("type") != "access":
             raise credentials_exception
         token_data = TokenData(username=username)
     except jwt.InvalidTokenError:

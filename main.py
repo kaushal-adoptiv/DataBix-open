@@ -9,6 +9,10 @@ from typing import AsyncIterator
 
 from fastapi import FastAPI, Request # Request object import for the telemetry middleware [health]
 from fastapi.middleware.cors import CORSMiddleware
+from api.v1.routers.admin import router as admin_router
+from api.v1.routers.assistant import router as assistant_router
+from api.v1.routers.branding import router as branding_router
+from api.v1.routers.me import router as me_router
 from api.v1.routers.users import router as users_router 
 from api.v1.routers.short_selling import router as short_selling_router
 from auth.routes import router as auth_router
@@ -42,6 +46,10 @@ app = FastAPI(
 app.include_router(short_selling_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(me_router, prefix="/api/v1")
+app.include_router(admin_router, prefix="/api/v1")
+app.include_router(branding_router, prefix="/api/v1")
+app.include_router(assistant_router, prefix="/api/v1")
 
 # Unset: local development origins. Set but empty (the Compose default): no
 # cross-origin access, which suits a UI served from the same origin via nginx.

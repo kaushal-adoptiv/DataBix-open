@@ -20,7 +20,11 @@ import sys
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from datetime import UTC, datetime
+
+from api.v1.schemas.admin import PasswordReset
 from auth.schemas import UserCreate
+from auth.sessions import revoke_user_sessions
 from auth.utils import get_password_hash
 from database import Base, SessionLocal, engine
 from models.schema import upgrade_schema
@@ -53,6 +57,7 @@ def create_user(username: str, admin: bool) -> None:
                 username=new_user.username,
                 hashed_password=get_password_hash(new_user.password),
                 is_admin=admin,
+                created_at=datetime.now(UTC),
             )
         )
     role = "administrator" if admin else "user"
@@ -70,8 +75,8 @@ def list_users() -> None:
 def set_password(username: str) -> None:
     normalized = username.strip().lower()
     try:
-        # Reuse the signup rules (length, bcrypt byte limit) for the new password.
-        password = UserCreate(username=normalized, password=_read_password()).password
+        # Reuse the account rules (length, bcrypt byte limit) for the new password.
+        password = PasswordReset(password=_read_password()).password
     except ValidationError as error:
         problems = "; ".join(
             f"{'.'.join(map(str, issue['loc']))}: {issue['msg']}" for issue in error.errors()
@@ -82,6 +87,7 @@ def set_password(username: str) -> None:
         if user is None:
             raise SystemExit(f"User {normalized!r} does not exist")
         user.hashed_password = get_password_hash(password)
+        revoke_user_sessions(session, user.id)
     print(f"Password updated for {normalized!r}")
 
 
@@ -93,6 +99,8 @@ def update_user(username: str, **fields: bool) -> None:
             raise SystemExit(f"User {normalized!r} does not exist")
         for name, value in fields.items():
             setattr(user, name, value)
+        if fields.get("is_active") is False:
+            revoke_user_sessions(session, user.id)
     print(f"Updated {normalized!r}: {fields}")
 
 

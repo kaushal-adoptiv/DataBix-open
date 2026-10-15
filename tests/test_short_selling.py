@@ -15,6 +15,8 @@ from database import Base
 from auth.dependencies import get_current_user
 from ingestion.short_selling import ingest_short_selling_csv
 from main import app
+from services.ingestion_runs import get_ingestion_recorder
+from tests.conftest import FakeRedis
 from models import ShortSellingMaster
 from repositories.short_selling_repository import ShortSellingRepository
 from services.short_selling_service import (
@@ -27,37 +29,30 @@ from services.short_selling_service import (
 from services import short_selling_service as short_selling_service_module
 
 
+class FakeRecorder:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, Any]] = []
+
+    def start(self, filename: str, triggered_by: str) -> int:
+        self.events.append(("start", filename))
+        return 1
+
+    def finish(self, run_id: int, result: Any) -> None:
+        self.events.append(("finish", result.postgres_rows))
+
+    def fail(self, run_id: int, reason: str) -> None:
+        self.events.append(("fail", reason))
+
+
 @pytest.fixture(autouse=True)
 def authenticated_test_user() -> Any:
     app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(
         id=1, username="test-user", is_active=True, is_admin=True
     )
+    app.dependency_overrides[get_ingestion_recorder] = FakeRecorder
     yield
     app.dependency_overrides.pop(get_current_user, None)
-
-
-class FakeRedis:
-    def __init__(self) -> None:
-        self.values: dict[str, str] = {}
-        self.get_calls = 0
-        self.set_calls = 0
-
-    def get(self, key: str) -> str | None:
-        self.get_calls += 1
-        return self.values.get(key)
-
-    def set(self, key: str, value: str, ex: int) -> None:
-        self.set_calls += 1
-        self.values[key] = value
-
-    def scan_iter(self, match: str, count: int) -> list[str]:
-        return [key for key in self.values if key.startswith(f"{CACHE_KEY_PREFIX}:")]
-
-    def delete(self, *keys: str) -> int:
-        deleted = 0
-        for key in keys:
-            deleted += self.values.pop(key, None) is not None
-        return deleted
+    app.dependency_overrides.pop(get_ingestion_recorder, None)
 
 
 class FakeCollection:

@@ -54,5 +54,6 @@ def create_access_token(
     to_encode = data.copy()
     now = datetime.now(UTC)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"iat": now, "exp": expire})
+    # "type" keeps other JWTs signed with this key from being accepted as access tokens.
+    to_encode.update({"iat": now, "exp": expire, "type": "access"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)

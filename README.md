@@ -4,15 +4,19 @@
 - DataBix-open is a containerized FastAPI microservice for authenticated short-selling data ingestion and retrieval.
 - It stores normalized, query-ready records in PostgreSQL (hot tier) and source history in MongoDB (cold tier).
 - Chunked CSV ingestion is idempotent; Redis caches filtered API queries and is invalidated after new data is written.
-- Docker Compose orchestrates the API, databases, cache, Nginx, Grafana, Loki, and Grafana Alloy.
+- A React web UI built as microfrontends (a shell plus five independently deployable remotes) covers analytics, a watchlist with spike alerts, an AI assistant, and an admin console with white-label branding.
+- Docker Compose orchestrates the API, web UI, databases, cache, Nginx, Grafana, Loki, and Grafana Alloy.
 - GitHub Actions runs tests and Compose health checks, then publishes multi-architecture application images to GHCR.
 
-DataBix-open is a blueprint for a small data service with clear API, ingestion, persistence, authentication, caching, telemetry and observability layers.
+DataBix-open is a blueprint for a small data service with clear API, ingestion, persistence, authentication, caching, telemetry and observability layers, and a microfrontend web UI.
+
+![Overview](frontend/screenshots/02-overview.png)
 
 ## Contents
 
 - [Features](#features)
 - [Architecture](#architecture)
+- [Web UI](#web-ui)
 - [Data flow and storage](#data-flow-and-storage)
 - [API](#api)
 - [Run locally with Docker Compose](#run-locally-with-docker-compose)
@@ -28,7 +32,11 @@ DataBix-open is a blueprint for a small data service with clear API, ingestion, 
 - MongoDB as the cold/history store for raw source rows and their normalized projection.
 - Chunked CSV ingestion with content hashing, deterministic source-row identity, and repeat-load deduplication.
 - Redis cache for filtered and paginated short-selling responses, with cache invalidation after new records are written.
-- MCP stdio tool that proxies the authenticated short-selling API rather than bypassing application logic.
+- Analytics API: coverage, range summary, daily totals, top symbols, symbol search/stats/series, sortable lists, CSV export.
+- Microfrontend web UI ([frontend/README.md](frontend/README.md)): overview, explorer, symbols, comparison, watchlist and alerts, Ask AI, and admin (status, ingestion, users, branding).
+- White-label branding per deployment or from the admin console ([branding/README.md](branding/README.md)).
+- Optional AI assistant: Claude with read-only tools over the same data (`ASSISTANT_ENABLED`).
+- MCP stdio tools that proxy the authenticated API (records, summary, daily totals, top symbols, symbol search and stats) rather than bypassing application logic.
 - Docker Compose stack with Nginx, Grafana, Loki, and Alloy log collection.
 - GitHub Actions tests, Compose validation/health check, and GHCR image publishing.
 
@@ -37,7 +45,8 @@ DataBix-open is a blueprint for a small data service with clear API, ingestion, 
 ```mermaid
 flowchart LR
 	Client[API client / browser] -->|HTTP| Nginx[Nginx reverse proxy]
-	Nginx -->|HTTP| API[FastAPI]
+	Nginx -->|/api| API[FastAPI]
+	Nginx -->|/ and /mfe/*| Web[Web UI: shell + 5 microfrontends]
 	MCPClient[MCP-capable client] -->|stdio| MCP[MCP proxy]
 	MCP -->|internal HTTP + bearer token| API
 
@@ -59,6 +68,17 @@ flowchart LR
 
 The CSV folder is mounted into the backend container read-only. Alloy discovers containers labeled for log collection; the backend currently has that label. Grafana queries Loki; Alloy is the collector and Loki is the log store.
 
+## Web UI
+
+The web UI lives in [`frontend/`](frontend/README.md): a React shell plus five Module Federation remotes (overview, explorer, symbols, assistant, admin). Each one is built into its own static nginx container and served through the edge proxy on the same origin as the API.
+
+| | |
+| --- | --- |
+| ![Explorer](frontend/screenshots/04-explorer.png) | ![Watchlist](frontend/screenshots/08-watchlist.png) |
+| ![Ask AI](frontend/screenshots/10-assistant.png) | ![White-label](frontend/screenshots/16-whitelabel-overview.png) |
+
+See the [frontend README](frontend/README.md) for the architecture, the shell–remote contract, development workflow, and the full screenshot gallery.
+
 ## Data flow and storage
 
 ### Hot and cold tiers
@@ -77,6 +97,8 @@ Ingestion performs two database passes:
 2. Insert normalized rows into PostgreSQL, skipping rows already imported from the same source content and row number.
 3. Invalidate relevant Redis cache entries after new PostgreSQL rows are written.
 
+Deduplication is per source file (content hash + row number), not per trade. Two files whose date ranges overlap, such as the bundled 12-month and 6-month extracts, therefore count the overlapping trades twice. Ingest only one of them.
+
 MongoDB and PostgreSQL do not share a transaction. If the PostgreSQL pass fails after MongoDB completes, retrying is safe: MongoDB upserts are repeatable and PostgreSQL deduplicates source rows. The HTTP ingestion route is synchronous; clients should wait for its response before starting another load.
 
 ## API
@@ -90,7 +112,24 @@ Base path: `/api/v1`. Interactive OpenAPI documentation is available at `/docs` 
 | `POST` | `/api/v1/auth/token` | Public | Obtain a JWT using OAuth2 form fields `username` and `password` |
 | `GET` | `/api/v1/users/me` | Bearer token | Return the current active user |
 | `POST` | `/api/v1/short-selling/ingest` | Bearer token, administrator | Ingest the bundled CSV or a named CSV in `datafiles/` |
-| `GET` | `/api/v1/short-selling` | Bearer token | Return filtered, paginated records |
+| `GET` | `/api/v1/short-selling` | Bearer token | Return filtered, sorted (`sort`), paginated records |
+| `POST` | `/api/v1/auth/refresh` | Refresh cookie + `X-Requested-With: databix` | Rotate the web session cookie and issue a new access token |
+| `POST` | `/api/v1/auth/logout` | Refresh cookie + `X-Requested-With: databix` | End the web session |
+| `GET` | `/api/v1/short-selling/coverage` | Bearer token | Earliest/latest date, record and symbol counts |
+| `GET` | `/api/v1/short-selling/summary` | Bearer token | Totals, peak day and top symbol for a date range |
+| `GET` | `/api/v1/short-selling/daily-totals` | Bearer token | Quantity, records and symbols per trading day |
+| `GET` | `/api/v1/short-selling/top-symbols` | Bearer token | Symbols ranked by quantity in a date range |
+| `GET` | `/api/v1/short-selling/symbols` | Bearer token | Symbol search (`q`) with all-time totals |
+| `GET` | `/api/v1/short-selling/symbols/{symbol}` | Bearer token | All-time statistics for one symbol |
+| `GET` | `/api/v1/short-selling/symbols/{symbol}/series` | Bearer token | Daily quantity for one symbol |
+| `GET` | `/api/v1/short-selling/export` | Bearer token | Streamed CSV of the filtered records (max 100,000 rows; formula cells neutralised) |
+| `GET`, `POST`, `DELETE` | `/api/v1/me/watchlist[/{symbol}]` | Bearer token | The signed-in user's watchlist |
+| `GET` | `/api/v1/me/alerts` | Bearer token | Spikes on watched symbols (`days`, `threshold`) |
+| `GET`, `POST` | `/api/v1/assistant/status`, `/api/v1/assistant/ask` | Bearer token | AI assistant (when enabled) |
+| `GET` | `/api/v1/branding` | Public | White-label branding for the UI |
+| `GET` | `/api/v1/admin/status`, `/sources`, `/ingestions` | Administrator | Health, source files, ingestion history |
+| `GET`, `POST`, `PATCH` | `/api/v1/admin/users[/{id}]`, `/users/{id}/password` | Administrator | Manage accounts and roles |
+| `PUT`, `DELETE` | `/api/v1/admin/branding` | Administrator | Save or reset branding |
 
 Short-selling query parameters:
 
@@ -129,7 +168,17 @@ Check backend health:
 curl --fail http://127.0.0.1:8000/health
 ```
 
-FastAPI is available directly at `http://127.0.0.1:8000` and through Nginx at `http://localhost`. With `API_DOCS_ENABLED=true`, OpenAPI docs are at `http://localhost/docs`.
+Open the web UI at `http://localhost`. FastAPI is also available directly at `http://127.0.0.1:8000`. With `API_DOCS_ENABLED=true`, OpenAPI docs are at `http://localhost/docs`.
+
+For a demo with sample accounts, data, watchlists and ingestion history (never in production):
+
+```bash
+docker compose exec -e DEMO_PASSWORD='choose-a-password' backend \
+  python -m scripts.seed_demo --files Short-Selling-01-10-2025-to-01-10-2026.csv
+# add --brand branding/examples/acme.json to try white-labelling
+```
+
+This creates `admin` (administrator) and `analyst` with that password.
 
 ### Create accounts
 
@@ -154,7 +203,7 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 
 | Service | Local address | Notes |
 | --- | --- | --- |
-| Nginx | `http://localhost:80` | Loopback-only by default (`NGINX_HTTP_BINDING`). Use `docker-compose.tls.yml` for HTTPS on public interfaces. Login is rate limited to 10 requests/minute per client IP. |
+| Web UI and API (Nginx) | `http://localhost:80` | Loopback-only by default (`NGINX_HTTP_BINDING`). Use `docker-compose.tls.yml` for HTTPS on public interfaces. Login is rate limited to 10 requests/minute per client IP; the assistant to 6/minute. |
 | FastAPI | `http://127.0.0.1:8000` | Loopback host binding. |
 | PostgreSQL | `localhost:<configured-host-port>` | Host port is configured by `POSTGRES_PORT_BINDING`; service-to-service port is `5432`. |
 | MongoDB | `localhost:27017` | Host-published for local administration; credentials from `.env`. |
@@ -204,6 +253,11 @@ Copy `.env.example` to `.env` and provide deployment-specific values. Variables 
 - `AUTH_SIGNUP_ENABLED`: allow public `POST /api/v1/auth/signup` (default `false`). Signup never creates administrators.
 - `API_DOCS_ENABLED`: serve `/docs`, `/redoc`, and `/openapi.json` (default `false`).
 - `NGINX_HTTP_BINDING`: host address for plain-HTTP Nginx (default `127.0.0.1:80`).
+- `AUTH_COOKIE_SECURE`, `REFRESH_TOKEN_DAYS`: web-session refresh cookie (Secure by default; 7-day sessions).
+- `BRANDING_FILE`: JSON file with the deployment's default branding (e.g. `/app/branding/default.json`).
+- `ASSISTANT_ENABLED`, `ASSISTANT_MODEL`, `ANTHROPIC_API_KEY`: optional AI assistant (default model `claude-opus-5-5`).
+- `APP_VERSION`: shown on the admin status page.
+- `WEB_IMAGE_PREFIX`, `WEB_IMAGE_TAG`: names of the six web UI images.
 - `GRAFANA_ADMIN_PASSWORD`: Grafana admin password.
 - `BACKEND_IMAGE`: optional image name override.
 - `CORS_ORIGINS`: comma-separated browser origins; empty (the Compose default) allows none. Credentialed CORS is disabled because auth uses bearer headers.
