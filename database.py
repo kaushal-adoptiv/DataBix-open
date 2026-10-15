@@ -59,19 +59,23 @@ def get_db() -> Generator[Session, None, None]:
 
 
 # 4. MongoDB Initialization Core
+MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "databix")
 # No credential defaults: missing secrets fail at connection time instead of
-# silently falling back to well-known passwords.
+# silently falling back to well-known passwords. The API connects as the
+# least-privilege application user, which db/mongo/10-app-user.js defines in
+# the application database (hence the default authSource).
 MONGO_URI = os.getenv("MONGODB_URI") or None
 if MONGO_URI is None:
-    mongo_username = os.getenv("MONGO_ROOT_USERNAME")
-    mongo_password = os.getenv("MONGO_ROOT_PASSWORD")
-    mongo_credentials = (
-        f"{quote_plus(mongo_username, safe='')}:{quote_plus(mongo_password, safe='')}@"
-        if mongo_username and mongo_password
-        else ""
-    )
-    MONGO_URI = f"mongodb://{mongo_credentials}mongodb:27017"
-MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "databix")
+    mongo_username = os.getenv("MONGO_USERNAME")
+    mongo_password = os.getenv("MONGO_PASSWORD")
+    if mongo_username and mongo_password:
+        auth_source = quote_plus(os.getenv("MONGO_AUTH_SOURCE") or MONGODB_DATABASE, safe="")
+        MONGO_URI = (
+            f"mongodb://{quote_plus(mongo_username, safe='')}:{quote_plus(mongo_password, safe='')}"
+            f"@mongodb:27017/?authSource={auth_source}"
+        )
+    else:
+        MONGO_URI = "mongodb://mongodb:27017"
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 # A password embedded in REDIS_URL takes precedence over REDIS_PASSWORD.
 REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None

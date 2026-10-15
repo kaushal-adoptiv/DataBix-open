@@ -115,7 +115,7 @@ Prerequisites: Docker Engine with Docker Compose v2. Run these commands from the
 cp .env.example .env
 ```
 
-Edit `.env`: fill in every empty value with unique local values. Compose refuses to start while `JWT_SECRET_KEY`, `POSTGRES_PASSWORD`, `MONGO_ROOT_PASSWORD`, `REDIS_PASSWORD`, or `GRAFANA_ADMIN_PASSWORD` is empty, and the API refuses a `JWT_SECRET_KEY` shorter than 32 bytes. Generate secrets with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Do not commit `.env` or share actual secrets. Start and inspect the stack:
+Edit `.env`: fill in every empty value with unique local values. Compose refuses to start while `JWT_SECRET_KEY`, `POSTGRES_PASSWORD`, `POSTGRES_APP_PASSWORD`, `MONGO_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, `REDIS_PASSWORD`, or `GRAFANA_ADMIN_PASSWORD` is empty, and the API refuses a `JWT_SECRET_KEY` shorter than 32 bytes. Generate secrets with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Do not commit `.env` or share actual secrets. Start and inspect the stack:
 
 ```bash
 docker compose config --quiet
@@ -140,11 +140,11 @@ docker compose exec backend python -m auth.manage create-user admin --admin
 docker compose exec backend python -m auth.manage create-user mcp-service
 ```
 
-`python -m auth.manage` also supports `grant-admin`, `revoke-admin`, `deactivate`, and `activate`.
+`python -m auth.manage` also supports `list-users`, `set-password`, `grant-admin`, `revoke-admin`, `deactivate`, and `activate`.
 
 ### HTTPS
 
-The default stack binds plain-HTTP Nginx to `127.0.0.1:80` only. For a network-facing deployment, put the certificate chain and key at `certs/fullchain.pem` and `certs/privkey.pem` and start with the TLS override, which serves HTTPS on 443 (with HSTS) and redirects port 80:
+The default stack binds plain-HTTP Nginx to `127.0.0.1:80` only. For a network-facing deployment, put the certificate chain and key at `certs/fullchain.pem` and `certs/privkey.pem` and start with the TLS override, which serves HTTPS on 443 (Mozilla "intermediate" TLS settings, HSTS), redirects port 80, and stops publishing the API's loopback port so every request passes through Nginx:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
@@ -195,8 +195,10 @@ See [CSV ingestion docs](docs/ingestion.md) for format, idempotency, and failure
 Copy `.env.example` to `.env` and provide deployment-specific values. Variables include:
 
 - `JWT_SECRET_KEY`: random signing key of at least 32 bytes; required by Compose and enforced by the API.
-- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT_BINDING`: PostgreSQL role/database and host binding.
-- `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD`, `MONGODB_DATABASE`: MongoDB credentials and application database.
+- `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT_BINDING`: PostgreSQL superuser (container initialization only), database, and host binding.
+- `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD`: least-privilege role the API connects as (created by `db/postgres/10-app-role.sh`).
+- `MONGO_ROOT_USERNAME`, `MONGO_ROOT_PASSWORD`, `MONGODB_DATABASE`: MongoDB root account (container initialization only) and application database.
+- `MONGO_APP_USER`, `MONGO_APP_PASSWORD`: `readWrite` user on the application database that the API connects as (created by `db/mongo/10-app-user.js`).
 - `REDIS_URL`, `REDIS_PASSWORD`, `REDIS_MAXMEMORY`: Redis connection, password (required), and cache memory cap.
 - `MCP_BACKEND_USERNAME`, `MCP_BACKEND_PASSWORD`: service-account credentials for the MCP proxy; create the account with `python -m auth.manage create-user` first.
 - `AUTH_SIGNUP_ENABLED`: allow public `POST /api/v1/auth/signup` (default `false`). Signup never creates administrators.
@@ -204,7 +206,8 @@ Copy `.env.example` to `.env` and provide deployment-specific values. Variables 
 - `NGINX_HTTP_BINDING`: host address for plain-HTTP Nginx (default `127.0.0.1:80`).
 - `GRAFANA_ADMIN_PASSWORD`: Grafana admin password.
 - `BACKEND_IMAGE`: optional image name override.
-- `CORS_ORIGINS`: comma-separated browser origins.
+- `CORS_ORIGINS`: comma-separated browser origins; empty (the Compose default) allows none. Credentialed CORS is disabled because auth uses bearer headers.
+- `FORWARDED_ALLOW_IPS`: proxies whose `X-Forwarded-For`/`-Proto` headers uvicorn trusts (default: Docker private ranges, where Nginx runs).
 - `DATABASE_URL`: optional SQLAlchemy URL override; when set, it takes precedence over the separate PostgreSQL settings.
 
 Security notes:
@@ -213,7 +216,9 @@ Security notes:
 - Signup is disabled by default and can never create administrators; only administrators can trigger ingestion. Accounts are managed with `python -m auth.manage`.
 - Nginx rate-limits login/signup per client IP, caps request bodies, and hides its version. If another load balancer sits in front, configure Nginx's real-IP module so limits apply per end client.
 - Use `docker-compose.tls.yml` (or TLS at a trusted load balancer) for any network-facing deployment; plain HTTP is loopback-only by default.
-- Keep PostgreSQL, MongoDB, Redis, Loki, and Alloy private. Alloy reaches Docker through `docker-socket-proxy` limited to read-only container endpoints; note that container inspection still exposes container environment variables to it.
+- The API connects to PostgreSQL and MongoDB with least-privilege accounts, not the superuser/root accounts, so a compromised API cannot run server-side programs or administer the databases.
+- Keep PostgreSQL, MongoDB, Redis, Loki, and Alloy private. Alloy reaches Docker through `wollomatic/socket-proxy`, which accepts only Alloy and only the read-only endpoints it needs (ping, version, container and network listing, events, inspect, logs). Container inspection still returns environment variables, so the proxy runs on an internal-only network.
+- Nginx overwrites `X-Forwarded-For` with the connecting address and the API logs that client IP with each request and ingestion.
 - The runtime image runs as an unprivileged user and installs only hash-pinned runtime dependencies from `requirements.lock`.
 - Startup uses SQLAlchemy `create_all` for missing tables, not schema migrations. Add a migration strategy before production schema evolution.
 
@@ -223,22 +228,42 @@ Run tests from the project directory:
 
 ```bash
 python -m pip install --require-hashes -r requirements.lock
-python -m pip install -r requirements-dev.txt
+python -m pip install --require-hashes -r requirements-dev.lock
 python -m pytest -q
 docker compose config --quiet
 ```
 
-`requirements.txt` holds the version ranges; `requirements.lock` is the hash-pinned set generated from it with `uv pip compile` (the exact command is at the top of the lock file).
+`requirements.txt` and `requirements-dev.txt` hold the version ranges; `requirements.lock` and `requirements-dev.lock` are the hash-pinned sets generated from them with `uv pip compile` (the exact commands are at the top of each lock file).
 
 The tests cover authentication, route behavior, filtering/pagination, cache behavior, ingestion order/deduplication, and invalidation using an in-memory SQLite database or test doubles. The production Compose runtime uses PostgreSQL.
 
-GitHub Actions in `.github/workflows/ci-cd.yml` runs tests, audits locked dependencies with `pip-audit`, validates Compose (including the TLS override), starts the Compose stack, and checks backend health directly and through Nginx. Actions are pinned to commit SHAs, and Dependabot keeps actions and image tags current. On pushes to `main` and version tags (`v*`), the publish job builds and pushes a multi-architecture application image to GHCR. Pull requests to `main` run CI but do not publish. The workflow does **not** automatically deploy to a server; deployment infrastructure and credentials must be configured separately.
+GitHub Actions in `.github/workflows/ci-cd.yml` runs tests, audits locked dependencies with `pip-audit`, validates Compose (including the TLS override), starts the Compose stack, checks backend health directly and through Nginx, and confirms backend logs reach Loki through the socket proxy. It also runs weekly so new vulnerabilities in locked dependencies are flagged without a push. Actions and images are pinned to digests, and Dependabot keeps them current. On pushes to `main` and version tags (`v*`), the publish job builds and pushes a multi-architecture application image to GHCR. Pull requests to `main` run CI but do not publish. The workflow does **not** automatically deploy to a server; deployment infrastructure and credentials must be configured separately.
 
 ## Deployment notes
 
 For a first deployment, use a Linux host with Docker Engine and Compose v2, clone the project, create a private server-side `.env`, configure persistent storage and backups, then start the stack with Compose. If using the GHCR image, set `BACKEND_IMAGE` to the published image/tag and pull it before starting. Keep private image access tokens out of source control.
 
-Before public production use, enable TLS (`docker-compose.tls.yml`), firewall rules, secret management, durable database and Loki/Grafana storage, backups, monitoring/alert destinations, and a migration plan. Startup adds the `users.is_admin` column to databases created before the administrator role existed; promote an existing account with `python -m auth.manage grant-admin <username>`. Current CI publishes images but does not perform server deployment.
+Before public production use, enable TLS (`docker-compose.tls.yml`), firewall rules, secret management, durable database and Loki/Grafana storage, backups, monitoring/alert destinations, and a migration plan. 
+
+### Upgrading an existing deployment
+
+1. Add the new variables to `.env`: `POSTGRES_APP_PASSWORD`, `MONGO_APP_PASSWORD`, `REDIS_PASSWORD`, and a `JWT_SECRET_KEY` of at least 32 bytes.
+2. Create the least-privilege database accounts (both scripts are idempotent; on new data directories they run automatically):
+
+   ```bash
+   docker compose up -d postgres_db mongodb
+   docker compose exec postgres_db sh /docker-entrypoint-initdb.d/10-app-role.sh
+   docker compose exec mongodb sh -c 'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin /docker-entrypoint-initdb.d/10-app-user.js'
+   ```
+
+3. Start the stack. Startup adds the `users.is_admin` column to existing databases.
+4. Review accounts created while signup was public, and promote an operator:
+
+   ```bash
+   docker compose exec backend python -m auth.manage list-users
+   docker compose exec backend python -m auth.manage deactivate <username>
+   docker compose exec backend python -m auth.manage grant-admin <username>
+   ``` Current CI publishes images but does not perform server deployment.
 
 ## Documentation
 

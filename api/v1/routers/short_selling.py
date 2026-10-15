@@ -3,7 +3,7 @@ import logging
 from typing import Annotated
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from api.v1.schemas.short_selling import (
     ShortSellingFilters,
@@ -26,6 +26,7 @@ audit_logger = logging.getLogger("databix.audit")
 
 @router.post("/ingest", response_model=ShortSellingIngestionResponse)
 def ingest_short_selling(
+    request: Request,
     service: Annotated[ShortSellingService, Depends(get_short_selling_service)],
     admin: Annotated[User, Depends(get_current_admin)],
     filename: Annotated[str | None, Query(min_length=5, max_length=255)] = None,
@@ -41,7 +42,14 @@ def ingest_short_selling(
             detail="filename must be a CSV filename without a directory path",
         )
     audit_logger.info(
-        json.dumps({"event": "ingest_requested", "user": admin.username, "filename": filename})
+        json.dumps(
+            {
+                "event": "ingest_requested",
+                "user": admin.username,
+                "client_ip": request.client.host if request.client else None,
+                "filename": filename,
+            }
+        )
     )
     try:
         result = service.ingest_csv(filename=filename)

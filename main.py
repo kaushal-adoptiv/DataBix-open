@@ -43,15 +43,18 @@ app.include_router(short_selling_router, prefix="/api/v1")
 app.include_router(users_router, prefix="/api/v1")
 app.include_router(auth_router, prefix="/api/v1")
 
-allowed_origins = (
-    os.getenv("CORS_ORIGINS")
-    or "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173"
+# Unset: local development origins. Set but empty (the Compose default): no
+# cross-origin access, which suits a UI served from the same origin via nginx.
+allowed_origins = os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173",
 ).split(",")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in allowed_origins if origin.strip()],
-    allow_credentials=True,
+    # Auth uses bearer headers, not cookies, so credentialed CORS is unnecessary.
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -87,6 +90,7 @@ async def telemetry_middleware(request: Request, call_next):
         "level": "INFO" if response.status_code < 400 else "ERROR",
         "correlation_id": correlation_id,
         "client": client_type,
+        "client_ip": request.client.host if request.client else None,
         "method": request.method,
         "path": request.url.path,
         "status_code": response.status_code,

@@ -63,3 +63,19 @@ async def test_responses_carry_security_headers_and_safe_correlation_id() -> Non
     assert replaced.headers["x-correlation-id"] != "x" * 65
     assert accepted.headers["x-content-type-options"] == "nosniff"
     assert accepted.headers["x-frame-options"] == "DENY"
+
+
+@pytest.mark.asyncio
+async def test_cors_does_not_allow_credentials() -> None:
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.options(
+            "/health",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert "access-control-allow-credentials" not in response.headers

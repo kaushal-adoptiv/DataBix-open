@@ -12,6 +12,7 @@ from auth.dependencies import get_db
 from auth.utils import SECRET_KEY, get_password_hash, load_secret_key, verify_password
 from database import Base
 from main import app
+from models import schema as schema_module
 from models.schema import upgrade_schema
 from models.user_models import User
 
@@ -206,4 +207,26 @@ def test_upgrade_schema_adds_admin_column_to_existing_users_table() -> None:
 
     with engine.connect() as connection:
         assert connection.execute(text("SELECT is_admin FROM users")).scalar_one() in (0, False)
+    engine.dispose()
+
+
+
+def test_upgrade_schema_tolerates_losing_a_concurrent_upgrade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:", poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    real_has_column = schema_module._has_column
+    calls: list[str] = []
+
+    def has_column_after_race(*args: str) -> bool:
+        # The first check misses the column, as if another process added it
+        # between this check and the ALTER, which then fails as a duplicate.
+        calls.append(args[-1])
+        return len(calls) > 1 and real_has_column(*args)
+
+    monkeypatch.setattr(schema_module, "_has_column", has_column_after_race)
+    upgrade_schema(engine)
+
+    assert len(calls) == 2
     engine.dispose()

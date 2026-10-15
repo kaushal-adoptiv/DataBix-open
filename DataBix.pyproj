@@ -56,6 +56,8 @@
     <Content Include=".dockerignore" />
     <Content Include=".env.example" />
     <Content Include=".gitignore" />
+    <Content Include="db\mongo\10-app-user.js" />
+    <Content Include="db\postgres\10-app-role.sh" />
     <Content Include="docker-compose.tls.yml" />
     <Content Include="docker-compose.yml" />
     <Content Include="Dockerfile" />
@@ -73,6 +75,7 @@
     <Content Include="nginx\nginx.conf" />
     <Content Include="nginx\nginx.tls.conf" />
     <Content Include="pytest.ini" />
+    <Content Include="requirements-dev.lock" />
     <Content Include="requirements-dev.txt" />
     <Content Include="requirements.lock" />
     <Content Include="requirements.txt" />

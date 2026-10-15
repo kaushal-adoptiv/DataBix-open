@@ -10,3 +10,8 @@ services:
     volumes:
       - ./nginx/nginx.tls.conf:/etc/nginx/nginx.conf:ro
       - ./certs:/etc/nginx/certs:ro
+
+  # Only nginx reaches the API, so TLS and rate limits cannot be bypassed via
+  # the loopback port used for local development.
+  backend:
+    ports: !reset []
