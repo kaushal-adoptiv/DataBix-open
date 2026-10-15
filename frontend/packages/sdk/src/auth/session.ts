@@ -86,6 +86,8 @@ class Session {
     const response = await fetch("/api/v1/auth/token", {
       method: "POST",
       credentials: "same-origin",
+      // The header asks for the refresh cookie; cross-site forms cannot send it.
+      headers: CSRF_HEADERS,
       body: new URLSearchParams({ username, password }),
     });
     if (!response.ok) {

@@ -1,3 +1,4 @@
+from datetime import UTC
 from typing import Annotated
 
 import jwt
@@ -41,7 +42,7 @@ def get_current_user(db: DatabaseSession, token: BearerToken) -> User:
             token,
             SECRET_KEY,
             algorithms=[ALGORITHM],
-            options={"require": ["exp", "sub"]},
+            options={"require": ["exp", "sub", "iat"]},
         )
         username = payload.get("sub")
         if not isinstance(username, str) or payload.get("type") != "access":
@@ -52,6 +53,12 @@ def get_current_user(db: DatabaseSession, token: BearerToken) -> User:
     user = get_user(db, username=token_data.username)
     if user is None or not user.is_active:
         raise credentials_exception
+    if user.tokens_valid_after is not None:
+        cutoff = user.tokens_valid_after
+        cutoff = cutoff if cutoff.tzinfo else cutoff.replace(tzinfo=UTC)
+        # iat has one-second resolution; tokens from the reset's own second stay valid.
+        if int(payload["iat"]) < int(cutoff.timestamp()):
+            raise credentials_exception
     return user
 
 

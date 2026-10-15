@@ -18,3 +18,5 @@ class User(Base):
     )
     created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Access tokens issued before this moment are rejected (set on password resets).
+    tokens_valid_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

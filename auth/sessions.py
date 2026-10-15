@@ -82,8 +82,25 @@ def rotate(session: Session, token: str) -> tuple[User, str]:
     user = session.get(User, record.user_id)
     if user is None or not user.is_active:
         raise RefreshError
-    record.revoked_at = now
+    if not claim(session, record.id, now):
+        # A concurrent request rotated this token first; it gets the new one.
+        raise RefreshError
     return user, issue(session, user, record.family_id)
+
+
+def claim(session: Session, record_id: int, now: datetime) -> bool:
+    """Atomically mark a session as rotated; False if another request already did.
+
+    A conditional UPDATE (rather than read-then-write) means two concurrent
+    refreshes with the same token cannot both succeed and fork the session.
+    """
+    result = session.execute(
+        update(RefreshSession)
+        .where(RefreshSession.id == record_id, RefreshSession.revoked_at.is_(None))
+        .values(revoked_at=now)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
 
 
 def revoke(session: Session, token: str) -> None:

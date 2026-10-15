@@ -11,7 +11,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Get Branding Details */
+        get: operations["get_branding_details_api_v1_admin_branding_get"];
         /** Update Branding */
         put: operations["update_branding_api_v1_admin_branding_put"];
         post?: never;
@@ -222,7 +223,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Login For Access Token */
+        /**
+         * Login For Access Token
+         * @description Exchange credentials for an access token.
+         *
+         *     The web UI sends X-Requested-With and also receives the refresh cookie.
+         *     Other clients (scripts, the MCP server) get only the access token. A
+         *     cross-site form cannot set the header, so it cannot plant a session
+         *     cookie in someone else's browser (login CSRF).
+         */
         post: operations["login_for_access_token_api_v1_auth_token_post"];
         delete?: never;
         options?: never;
@@ -691,7 +700,10 @@ export interface components {
              */
             tagline: string;
         };
-        /** BrandingResponse */
+        /**
+         * BrandingResponse
+         * @description Admin view: also says who last changed the branding and when.
+         */
         BrandingResponse: {
             /**
              * Accent Color
@@ -875,6 +887,82 @@ export interface components {
             date: string;
             /** Total Quantity */
             total_quantity: number;
+        };
+        /**
+         * PublicBranding
+         * @description What anyone may see, including before sign-in.
+         */
+        PublicBranding: {
+            /**
+             * Accent Color
+             * @default #0D9488
+             */
+            accent_color: string;
+            /**
+             * Customized
+             * @default false
+             */
+            customized: boolean;
+            /**
+             * Default Theme
+             * @default system
+             * @enum {string}
+             */
+            default_theme: "system" | "light" | "dark";
+            /** Favicon Data Url */
+            favicon_data_url?: string | null;
+            /**
+             * Font Family
+             * @default Inter
+             * @enum {string}
+             */
+            font_family: "Inter" | "IBM Plex Sans" | "Source Sans 3" | "System";
+            /**
+             * Footer Text
+             * @default
+             */
+            footer_text: string;
+            /**
+             * Login Headline
+             * @default Market short-selling activity, at a glance
+             */
+            login_headline: string;
+            /** Logo Data Url */
+            logo_data_url?: string | null;
+            /**
+             * Primary Color
+             * @default #2563EB
+             */
+            primary_color: string;
+            /**
+             * Product Name
+             * @default DataBix
+             */
+            product_name: string;
+            /**
+             * Radius
+             * @default default
+             * @enum {string}
+             */
+            radius: "sharp" | "default" | "round";
+            /**
+             * Show Powered By
+             * @default true
+             */
+            show_powered_by: boolean;
+            /**
+             * Sidebar Style
+             * @default dark
+             * @enum {string}
+             */
+            sidebar_style: "dark" | "light" | "brand";
+            /** Support Email */
+            support_email?: string | null;
+            /**
+             * Tagline
+             * @default Short-selling intelligence
+             */
+            tagline: string;
         };
         /** SeriesPoint */
         SeriesPoint: {
@@ -1170,6 +1258,26 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_branding_details_api_v1_admin_branding_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrandingResponse"];
+                };
+            };
+        };
+    };
     update_branding_api_v1_admin_branding_put: {
         parameters: {
             query?: never;
@@ -1568,7 +1676,9 @@ export interface operations {
     login_for_access_token_api_v1_auth_token_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "x-requested-with"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1613,7 +1723,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["BrandingResponse"];
+                    "application/json": components["schemas"]["PublicBranding"];
                 };
             };
         };

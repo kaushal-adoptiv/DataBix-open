@@ -8,4 +8,5 @@ export { chartAccent, contrast, onColor, readableOn, isHex, type Mode } from "./
 export { DateRangeProvider, useDateRange, RANGE_PRESETS, type DateRangeApi } from "./range/DateRange";
 export * from "./hooks/queries";
 export { downloadExport } from "./download";
+export { safeRedirectPath } from "./navigation";
 export type { NavItem, NavSection, RemoteDefinition, ShellManifest } from "./manifest";

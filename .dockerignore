@@ -17,3 +17,6 @@ tests/
 certs/
 nginx/
 docker-compose*.yml
+# The web UI has its own images; dev-only helpers stay out of the API image.
+frontend/
+scripts/fake_claude_api.py

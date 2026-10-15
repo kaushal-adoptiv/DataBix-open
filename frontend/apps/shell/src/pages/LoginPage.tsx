@@ -1,14 +1,10 @@
-import { LoginError, useAuth, useBranding } from "@databix/sdk";
+import { LoginError, safeRedirectPath, useAuth, useBranding } from "@databix/sdk";
 import { Alert, Button, Field, Input } from "@databix/ui";
 import { Bell, ChartLine, LogIn, Sparkles } from "lucide-react";
 import { useEffect, useState, type FormEvent } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 
 import { BrandLockup } from "../layout/BrandMark";
-
-/** Only same-origin paths may be used as a post-login destination. */
-const safeNext = (value: string | null): string =>
-  value && value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\") ? value : "/overview";
 
 export function LoginPage() {
   const { status, login } = useAuth();
@@ -19,7 +15,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const next = safeNext(params.get("next"));
+  const next = safeRedirectPath(params.get("next"), window.location.origin);
 
   useEffect(() => {
     document.title = `Sign in · ${branding.product_name}`;

@@ -159,6 +159,10 @@ export const useIngestions = (limit = 50) =>
     queryFn: async () => unwrap(await api.GET("/api/v1/admin/ingestions", { params: { query: { limit } } })),
   });
 
+/** Branding plus who changed it last (administrators only). */
+export const useBrandingDetails = () =>
+  useQuery({ queryKey: ["admin", "branding"], queryFn: async () => unwrap(await api.GET("/api/v1/admin/branding")) });
+
 export const useUsers = () =>
   useQuery({ queryKey: ["admin", "users"], queryFn: async () => unwrap(await api.GET("/api/v1/admin/users")) });
 
@@ -189,11 +193,17 @@ export function useAdminMutations() {
     }),
     saveBranding: useMutation({
       mutationFn: async (body: Schemas["BrandingConfig"]) => unwrap(await api.PUT("/api/v1/admin/branding", { body })),
-      onSuccess: (data) => client.setQueryData(["branding"], data),
+      onSuccess: (data) => {
+        client.setQueryData(["admin", "branding"], data);
+        void client.invalidateQueries({ queryKey: ["branding"] });
+      },
     }),
     resetBranding: useMutation({
       mutationFn: async () => unwrap(await api.DELETE("/api/v1/admin/branding")),
-      onSuccess: (data) => client.setQueryData(["branding"], data),
+      onSuccess: (data) => {
+        client.setQueryData(["admin", "branding"], data);
+        void client.invalidateQueries({ queryKey: ["branding"] });
+      },
     }),
   };
 }

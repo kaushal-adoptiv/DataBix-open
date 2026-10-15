@@ -5,6 +5,7 @@ import {
   isHex,
   useAdminMutations,
   useBranding,
+  useBrandingDetails,
   useTheme,
   type BrandingInput,
   type Mode,
@@ -185,6 +186,7 @@ export function BrandingPage() {
   const { branding } = useBranding();
   const { mode } = useTheme();
   const { saveBranding, resetBranding } = useAdminMutations();
+  const details = useBrandingDetails();
   const toast = useToast();
   const saved = useMemo(() => toDraft(branding), [branding]);
   const [draft, setDraft] = useState<Draft>(saved);
@@ -337,7 +339,13 @@ export function BrandingPage() {
         <div style={{ position: "sticky", top: 76 }}>
           <Card
             title="Live preview"
-            subtitle={dirty ? "Unsaved changes" : branding.customized && branding.updated_at ? `Saved by ${branding.updated_by} · ${formatDateTime(branding.updated_at)}` : "Deployment defaults"}
+            subtitle={
+              dirty
+                ? "Unsaved changes"
+                : details.data?.customized && details.data.updated_at
+                  ? `Saved by ${details.data.updated_by} · ${formatDateTime(details.data.updated_at)}`
+                  : "Deployment defaults"
+            }
             actions={
               <SegmentedControl
                 label="Preview mode"

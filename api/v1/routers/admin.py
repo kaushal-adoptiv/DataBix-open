@@ -29,7 +29,7 @@ from auth.utils import get_password_hash
 from ingestion.short_selling import DEFAULT_SHORT_SELLING_CSV
 from models import User
 from services import short_selling_service as short_selling_module
-from services.branding import BrandingConfig, BrandingResponse, reset_branding, save_branding
+from services.branding import BrandingConfig, BrandingResponse, load_branding, reset_branding, save_branding
 from services.health import STARTED_AT, get_health_checker
 from services.ingestion_runs import IngestionRunRecorder, get_ingestion_recorder
 from services.short_selling_service import ShortSellingService, get_short_selling_service
@@ -171,10 +171,16 @@ def reset_password(
 ) -> Response:
     user = _get_user_or_404(db, user_id)
     user.hashed_password = get_password_hash(payload.password)
+    user.tokens_valid_after = datetime.now(UTC)
     revoke_user_sessions(db, user.id)
     db.commit()
     _audit("password_reset", admin, target=user.username)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/branding", response_model=BrandingResponse)
+def get_branding_details(_admin: Admin, db: DatabaseSession) -> BrandingResponse:
+    return load_branding(db)
 
 
 @router.put("/branding", response_model=BrandingResponse)

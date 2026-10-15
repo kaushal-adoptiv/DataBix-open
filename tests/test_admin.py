@@ -94,7 +94,9 @@ async def test_password_reset_and_deactivation_revoke_sessions(
     client: AsyncClient, people: AppDatabase
 ) -> None:
     login = await client.post(
-        "/api/v1/auth/token", data={"username": "analyst", "password": "correct-horse-battery"}
+        "/api/v1/auth/token",
+        data={"username": "analyst", "password": "correct-horse-battery"},
+        headers={"X-Requested-With": "databix"},
     )
     assert login.status_code == 200
     root = auth_headers("root")
@@ -112,7 +114,8 @@ async def test_password_reset_and_deactivation_revoke_sessions(
     )
     assert reset.status_code == 204
     with people.session_factory() as session:
-        assert all(record.revoked_at for record in session.scalars(select(RefreshSession)))
+        records = session.scalars(select(RefreshSession)).all()
+        assert records and all(record.revoked_at for record in records)
 
     old = await client.post(
         "/api/v1/auth/token", data={"username": "analyst", "password": "correct-horse-battery"}
@@ -183,7 +186,12 @@ async def test_branding_update_and_reset(client: AsyncClient, people: AppDatabas
     public = (await client.get("/api/v1/branding")).json()
     assert public["product_name"] == "Acme Markets"
     assert public["primary_color"] == "#7C3AED"
-    assert public["customized"] is True and public["updated_by"] == "root"
+    assert public["customized"] is True
+    # Who changed it is for administrators only.
+    assert "updated_by" not in public and "updated_at" not in public
+    details = (await client.get("/api/v1/admin/branding", headers=root)).json()
+    assert details["updated_by"] == "root"
+    assert (await client.get("/api/v1/admin/branding", headers=auth_headers("analyst"))).status_code == 403
 
     reset = await client.delete("/api/v1/admin/branding", headers=root)
     assert reset.json()["product_name"] == "DataBix"

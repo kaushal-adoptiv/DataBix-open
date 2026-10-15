@@ -453,6 +453,7 @@
       },
       "BrandingResponse": {
         "additionalProperties": false,
+        "description": "Admin view: also says who last changed the branding and when.",
         "properties": {
           "accent_color": {
             "default": "#0D9488",
@@ -919,6 +920,137 @@
           "total_quantity"
         ],
         "title": "PeakDay",
+        "type": "object"
+      },
+      "PublicBranding": {
+        "additionalProperties": false,
+        "description": "What anyone may see, including before sign-in.",
+        "properties": {
+          "accent_color": {
+            "default": "#0D9488",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Accent Color",
+            "type": "string"
+          },
+          "customized": {
+            "default": false,
+            "title": "Customized",
+            "type": "boolean"
+          },
+          "default_theme": {
+            "default": "system",
+            "enum": [
+              "system",
+              "light",
+              "dark"
+            ],
+            "title": "Default Theme",
+            "type": "string"
+          },
+          "favicon_data_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Favicon Data Url"
+          },
+          "font_family": {
+            "default": "Inter",
+            "enum": [
+              "Inter",
+              "IBM Plex Sans",
+              "Source Sans 3",
+              "System"
+            ],
+            "title": "Font Family",
+            "type": "string"
+          },
+          "footer_text": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Footer Text",
+            "type": "string"
+          },
+          "login_headline": {
+            "default": "Market short-selling activity, at a glance",
+            "maxLength": 100,
+            "title": "Login Headline",
+            "type": "string"
+          },
+          "logo_data_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo Data Url"
+          },
+          "primary_color": {
+            "default": "#2563EB",
+            "pattern": "^#[0-9A-Fa-f]{6}$",
+            "title": "Primary Color",
+            "type": "string"
+          },
+          "product_name": {
+            "default": "DataBix",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Product Name",
+            "type": "string"
+          },
+          "radius": {
+            "default": "default",
+            "enum": [
+              "sharp",
+              "default",
+              "round"
+            ],
+            "title": "Radius",
+            "type": "string"
+          },
+          "show_powered_by": {
+            "default": true,
+            "title": "Show Powered By",
+            "type": "boolean"
+          },
+          "sidebar_style": {
+            "default": "dark",
+            "enum": [
+              "dark",
+              "light",
+              "brand"
+            ],
+            "title": "Sidebar Style",
+            "type": "string"
+          },
+          "support_email": {
+            "anyOf": [
+              {
+                "maxLength": 254,
+                "pattern": "^[^@\\s<>\\\"'()]+@[^@\\s<>\\\"'()]+\\.[A-Za-z]{2,}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Support Email"
+          },
+          "tagline": {
+            "default": "Short-selling intelligence",
+            "maxLength": 80,
+            "title": "Tagline",
+            "type": "string"
+          }
+        },
+        "title": "PublicBranding",
         "type": "object"
       },
       "SeriesPoint": {
@@ -1758,6 +1890,30 @@
           "admin"
         ]
       },
+      "get": {
+        "operationId": "get_branding_details_api_v1_admin_branding_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrandingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Branding Details",
+        "tags": [
+          "admin"
+        ]
+      },
       "put": {
         "operationId": "update_branding_api_v1_admin_branding_put",
         "requestBody": {
@@ -2323,7 +2479,26 @@
     },
     "/api/v1/auth/token": {
       "post": {
+        "description": "Exchange credentials for an access token.\n\nThe web UI sends X-Requested-With and also receives the refresh cookie.\nOther clients (scripts, the MCP server) get only the access token. A\ncross-site form cannot set the header, so it cannot plant a session\ncookie in someone else's browser (login CSRF).",
         "operationId": "login_for_access_token_api_v1_auth_token_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-requested-with",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Requested-With"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/x-www-form-urlencoded": {
@@ -2371,7 +2546,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BrandingResponse"
+                  "$ref": "#/components/schemas/PublicBranding"
                 }
               }
             },

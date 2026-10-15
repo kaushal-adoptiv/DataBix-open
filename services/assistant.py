@@ -10,6 +10,10 @@ at a local stub for demos and tests.
 import json
 import logging
 import os
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date
 from typing import Any
 
@@ -33,7 +37,17 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "claude-opus-5-5"
 MAX_TOOL_ROUNDS = 6
+MAX_OUTPUT_TOKENS = 6_000
+REQUEST_TIMEOUT_SECONDS = 30.0
+# Stay well inside nginx's 120 s proxy_read_timeout for /api/v1/assistant/.
+OVERALL_DEADLINE_SECONDS = 90.0
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+
+# The API serves requests from one shared thread pool; cap how many of those
+# threads may be waiting on the model, and allow one question per user.
+_slots = threading.BoundedSemaphore(int(os.getenv("ASSISTANT_MAX_CONCURRENT", "4")))
+_active_users: set[int] = set()
+_active_lock = threading.Lock()
 
 SYSTEM_PROMPT = """You are the analytics assistant inside a web app about short selling on the \
 National Stock Exchange of India (NSE). Each record is one reported short sale: a trade date, \
@@ -156,6 +170,28 @@ class AssistantUnavailableError(RuntimeError):
     """Claude could not be reached or rejected the request."""
 
 
+class AssistantBusyError(RuntimeError):
+    """The user already has a question running, or every slot is taken."""
+
+
+@contextmanager
+def assistant_slot(user_id: int) -> Iterator[None]:
+    with _active_lock:
+        if user_id in _active_users:
+            raise AssistantBusyError("You already have a question in progress")
+        _active_users.add(user_id)
+    if not _slots.acquire(blocking=False):
+        with _active_lock:
+            _active_users.discard(user_id)
+        raise AssistantBusyError("The assistant is busy; try again in a moment")
+    try:
+        yield
+    finally:
+        _slots.release()
+        with _active_lock:
+            _active_users.discard(user_id)
+
+
 def assistant_enabled() -> bool:
     return env_flag("ASSISTANT_ENABLED")
 
@@ -188,7 +224,7 @@ class Assistant:
 
     def _client_or_create(self) -> anthropic.Anthropic:
         if self._client is None:
-            self._client = anthropic.Anthropic(timeout=60.0, max_retries=2)
+            self._client = anthropic.Anthropic(timeout=REQUEST_TIMEOUT_SECONDS, max_retries=1)
         return self._client
 
     def run_tool(self, name: str, raw_input: dict[str, Any]) -> str:
@@ -239,12 +275,19 @@ class Assistant:
         ]
         messages.append({"role": "user", "content": question})
         tool_calls: list[dict[str, Any]] = []
+        started = time.monotonic()
 
         for _ in range(MAX_TOOL_ROUNDS + 1):
+            remaining = OVERALL_DEADLINE_SECONDS - (time.monotonic() - started)
+            if remaining < 5:
+                return self._result(
+                    "That took too long to answer. Try a narrower question.", tool_calls, None
+                )
             try:
                 response = client.beta.messages.create(
                     model=self._model,
-                    max_tokens=16_000,
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    timeout=min(REQUEST_TIMEOUT_SECONDS, remaining),
                     system=SYSTEM_PROMPT,
                     tools=TOOLS,
                     messages=messages,

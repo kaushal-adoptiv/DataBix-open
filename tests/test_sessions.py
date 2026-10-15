@@ -14,7 +14,9 @@ CSRF = {"X-Requested-With": "databix"}
 
 async def login(client: AsyncClient, username: str = "alice") -> dict:
     response = await client.post(
-        "/api/v1/auth/token", data={"username": username, "password": "correct-horse-battery"}
+        "/api/v1/auth/token",
+        data={"username": username, "password": "correct-horse-battery"},
+        headers=CSRF,
     )
     assert response.status_code == 200, response.text
     return response.json()
@@ -23,7 +25,9 @@ async def login(client: AsyncClient, username: str = "alice") -> dict:
 async def test_login_sets_a_locked_down_refresh_cookie(client: AsyncClient, db: AppDatabase) -> None:
     db.add_user("alice")
     response = await client.post(
-        "/api/v1/auth/token", data={"username": "alice", "password": "correct-horse-battery"}
+        "/api/v1/auth/token",
+        data={"username": "alice", "password": "correct-horse-battery"},
+        headers=CSRF,
     )
     cookie = response.headers["set-cookie"]
     assert cookie.startswith(f"{sessions.REFRESH_COOKIE_NAME}=")
@@ -147,3 +151,49 @@ async def test_sessions_per_user_are_capped(client: AsyncClient, db: AppDatabase
             select(RefreshSession).where(RefreshSession.revoked_at.is_(None))
         ).all()
     assert len(active) == sessions.MAX_SESSIONS_PER_USER
+
+
+async def test_logins_without_the_header_get_no_session_cookie(client: AsyncClient, db: AppDatabase) -> None:
+    """A cross-site form cannot set the header, so it cannot plant a session (login CSRF)."""
+    db.add_user("alice")
+    response = await client.post(
+        "/api/v1/auth/token", data={"username": "alice", "password": "correct-horse-battery"}
+    )
+    assert response.status_code == 200
+    assert "set-cookie" not in response.headers
+    with db.session_factory() as session:
+        assert session.scalars(select(RefreshSession)).all() == []
+
+
+async def test_a_token_can_only_be_rotated_once(client: AsyncClient, db: AppDatabase) -> None:
+    db.add_user("alice")
+    await login(client)
+    with db.session_factory() as session:
+        record = session.scalars(select(RefreshSession)).one()
+    now = datetime.now(UTC)
+    # Two concurrent refreshes race to claim the same row; only one can win.
+    with db.session_factory.begin() as first, db.session_factory.begin() as second:
+        assert sessions.claim(first, record.id, now) is True
+    with db.session_factory.begin() as second:
+        assert sessions.claim(second, record.id, now) is False
+
+
+async def test_password_reset_invalidates_existing_access_tokens(client: AsyncClient, db: AppDatabase) -> None:
+    db.add_user("root", admin=True)
+    db.add_user("alice")
+    issued = (await login(client))["access_token"]
+    root = {"Authorization": f"Bearer {jwt.encode({'sub': 'root', 'type': 'access', 'iat': datetime.now(UTC), 'exp': datetime.now(UTC) + timedelta(minutes=5)}, SECRET_KEY, algorithm=ALGORITHM)}"}
+    users = (await client.get("/api/v1/admin/users", headers=root)).json()["items"]
+    alice_id = next(user["id"] for user in users if user["username"] == "alice")
+
+    # Backdate alice's token so it predates the reset by more than iat's 1 s resolution.
+    payload = jwt.decode(issued, SECRET_KEY, algorithms=[ALGORITHM])
+    payload["iat"] = payload["iat"] - 5
+    old_token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+    assert (await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {old_token}"})).status_code == 200
+
+    reset = await client.post(
+        f"/api/v1/admin/users/{alice_id}/password", json={"password": "brand-new-password"}, headers=root
+    )
+    assert reset.status_code == 204
+    assert (await client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {old_token}"})).status_code == 401

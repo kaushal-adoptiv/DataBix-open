@@ -112,6 +112,7 @@ async def test_tool_loop_runs_tools_and_returns_the_answer(
 
     first, second = claude.requests
     assert first["model"] == "claude-opus-5-5"
+    assert first["max_tokens"] <= 6_000 and first["timeout"] <= 30
     assert first["fallbacks"] == "default"
     assert first["betas"] == ["server-side-fallback-2026-07-01"]
     assert "tool_choice" not in first
@@ -172,6 +173,42 @@ async def test_api_errors_become_gateway_errors(
     )
     assert response.status_code == 502
     assert response.json()["detail"] == "The AI service could not be reached"
+
+
+async def test_one_question_per_user_and_a_global_cap(
+    client: AsyncClient, seeded: AppDatabase, enabled: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from services import assistant as assistant_module
+
+    use_claude(ScriptedClaude(message("end_turn", text_block("ok")), message("end_turn", text_block("ok"))))
+    headers = auth_headers("analyst")
+    user_id = (await client.get("/api/v1/users/me", headers=headers)).json()["id"]
+
+    with assistant_module.assistant_slot(user_id):
+        busy = await client.post("/api/v1/assistant/ask", json={"question": "x"}, headers=headers)
+    assert busy.status_code == 429
+    assert "already have a question" in busy.json()["detail"]
+
+    monkeypatch.setattr(assistant_module, "_slots", threading.BoundedSemaphore(1))
+    with assistant_module.assistant_slot(-1):
+        full = await client.post("/api/v1/assistant/ask", json={"question": "x"}, headers=headers)
+    assert full.status_code == 429
+    assert (await client.post("/api/v1/assistant/ask", json={"question": "x"}, headers=headers)).status_code == 200
+
+
+async def test_overall_deadline_stops_long_loops(
+    client: AsyncClient, seeded: AppDatabase, enabled: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from services import assistant as assistant_module
+
+    monkeypatch.setattr(assistant_module, "OVERALL_DEADLINE_SECONDS", 0)
+    claude = ScriptedClaude(message("end_turn", text_block("never sent")))
+    use_claude(claude)
+    response = await client.post("/api/v1/assistant/ask", json={"question": "x"}, headers=auth_headers("analyst"))
+    assert "took too long" in response.json()["answer"]
+    assert claude.requests == []
 
 
 @pytest.mark.parametrize(

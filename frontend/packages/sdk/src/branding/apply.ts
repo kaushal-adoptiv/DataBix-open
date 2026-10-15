@@ -1,7 +1,7 @@
 import type { components } from "../api/schema";
 import { chartAccent, onColor, readableOn, type Mode } from "./color";
 
-export type Branding = components["schemas"]["BrandingResponse"];
+export type Branding = components["schemas"]["PublicBranding"];
 export type BrandingInput = components["schemas"]["BrandingConfig"];
 
 export const DEFAULT_BRANDING: Branding = {
@@ -20,8 +20,6 @@ export const DEFAULT_BRANDING: Branding = {
   support_email: null,
   show_powered_by: true,
   customized: false,
-  updated_at: null,
-  updated_by: null,
 };
 
 const FONT_STACKS: Record<BrandingInput["font_family"] & string, string> = {

@@ -7,6 +7,7 @@ ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("users", "is_admin", "BOOLEAN NOT NULL DEFAULT FALSE"),
     ("users", "created_at", "TIMESTAMP WITH TIME ZONE"),
     ("users", "last_login_at", "TIMESTAMP WITH TIME ZONE"),
+    ("users", "tokens_valid_after", "TIMESTAMP WITH TIME ZONE"),
 )
 
 

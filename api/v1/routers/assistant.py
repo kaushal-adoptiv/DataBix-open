@@ -9,10 +9,12 @@ from auth.dependencies import get_current_user
 from models import User
 from services.assistant import (
     Assistant,
+    AssistantBusyError,
     AssistantDisabledError,
     AssistantUnavailableError,
     assistant_enabled,
     assistant_model,
+    assistant_slot,
     get_assistant,
 )
 
@@ -32,10 +34,15 @@ def ask(
     user: Annotated[User, Depends(get_current_user)],
     assistant: Annotated[Assistant, Depends(get_assistant)],
 ) -> AskResponse:
+    if not assistant_enabled():
+        raise HTTPException(status_code=503, detail="The AI assistant is not enabled")
     try:
-        result = assistant.ask(
-            payload.question, [turn.model_dump() for turn in payload.history]
-        )
+        with assistant_slot(user.id):
+            result = assistant.ask(
+                payload.question, [turn.model_dump() for turn in payload.history]
+            )
+    except AssistantBusyError as error:
+        raise HTTPException(status_code=429, detail=str(error)) from error
     except AssistantDisabledError as error:
         raise HTTPException(status_code=503, detail="The AI assistant is not enabled") from error
     except AssistantUnavailableError as error:

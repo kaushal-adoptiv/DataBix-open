@@ -87,6 +87,7 @@ def set_password(username: str) -> None:
         if user is None:
             raise SystemExit(f"User {normalized!r} does not exist")
         user.hashed_password = get_password_hash(password)
+        user.tokens_valid_after = datetime.now(UTC)
         revoke_user_sessions(session, user.id)
     print(f"Password updated for {normalized!r}")
 

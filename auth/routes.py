@@ -63,7 +63,15 @@ def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DatabaseSession,
     response: Response,
+    x_requested_with: Annotated[str | None, Header()] = None,
 ) -> Token:
+    """Exchange credentials for an access token.
+
+    The web UI sends X-Requested-With and also receives the refresh cookie.
+    Other clients (scripts, the MCP server) get only the access token. A
+    cross-site form cannot set the header, so it cannot plant a session
+    cookie in someone else's browser (login CSRF).
+    """
     user = authenticate_user(db, form_data.username.strip().lower(), form_data.password)
     if user is None or not user.is_active:
         raise HTTPException(
@@ -72,9 +80,9 @@ def login_for_access_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
     user.last_login_at = datetime.now(UTC)
-    refresh_token = sessions.issue(db, user)
+    if x_requested_with == CSRF_HEADER_VALUE:
+        _set_refresh_cookie(response, sessions.issue(db, user))
     db.commit()
-    _set_refresh_cookie(response, refresh_token)
     return _token_response(user)
 
 

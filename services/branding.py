@@ -105,10 +105,21 @@ class BrandingConfig(BaseModel):
         return _validate_image_data_url(value, MAX_FAVICON_BYTES)
 
 
-class BrandingResponse(BrandingConfig):
+class PublicBranding(BrandingConfig):
+    """What anyone may see, including before sign-in."""
+
     customized: bool = False
+
+
+class BrandingResponse(PublicBranding):
+    """Admin view: also says who last changed the branding and when."""
+
     updated_at: datetime | None = None
     updated_by: str | None = None
+
+
+def public_branding(branding: BrandingResponse) -> PublicBranding:
+    return PublicBranding.model_validate(branding.model_dump(exclude={"updated_at", "updated_by"}))
 
 
 def default_branding() -> BrandingConfig:
