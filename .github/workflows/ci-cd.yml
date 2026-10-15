@@ -88,6 +88,23 @@ jobs:
           docker compose logs --tail 50 docker_socket_proxy alloy
           exit 1
 
+      - name: Smoke-test admin login, ingestion and queries through nginx
+        run: |
+          password="$(openssl rand -hex 16)"
+          echo "::add-mask::${password}"
+          echo "${password}" | docker compose exec -T backend python -m auth.manage create-user ci-admin --admin
+          token="$(curl --fail --silent --show-error http://localhost/api/v1/auth/token \
+            --data-urlencode username=ci-admin --data-urlencode "password=${password}" \
+            | python3 -c 'import json, sys; print(json.load(sys.stdin)["access_token"])')"
+          echo "::add-mask::${token}"
+          # Exercises the least-privilege PostgreSQL role, the MongoDB app user and Redis auth.
+          curl --fail --silent --show-error -X POST -H "Authorization: Bearer ${token}" \
+            http://localhost/api/v1/short-selling/ingest \
+            | python3 -c 'import json, sys; r = json.load(sys.stdin); print(r); assert r["mongo_rows"] > 0 and r["postgres_rows"] > 0'
+          curl --fail --silent --show-error -H "Authorization: Bearer ${token}" \
+            "http://localhost/api/v1/short-selling?limit=1" \
+            | python3 -c 'import json, sys; r = json.load(sys.stdin); print("total rows:", r["total"]); assert r["total"] > 0'
+
       - name: Show container status on failure
         if: failure()
         run: |
