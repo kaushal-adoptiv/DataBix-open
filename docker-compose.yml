@@ -4,12 +4,16 @@ services:
   # REVERSE PROXY LAYER (Secure entry point for  React App)
   # =========================================================================
   reverse_proxy:
-    image: nginx:alpine
+    image: nginx:1.30-alpine
     container_name: nginx_proxy
     ports:
-      - "80:80"
+      # Plain HTTP is loopback-only. For network-facing deployments add
+      # -f docker-compose.tls.yml, which serves HTTPS and redirects HTTP.
+      - "${NGINX_HTTP_BINDING:-127.0.0.1:80}:80"
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/common.conf:/etc/nginx/databix/common.conf:ro
+      - ./nginx/locations.conf:/etc/nginx/databix/locations.conf:ro
     depends_on:
       backend:
         condition: service_healthy
@@ -33,14 +37,18 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       POSTGRES_HOST: postgres_db
       POSTGRES_USER: ${POSTGRES_USER:-postgre}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secretpass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in env file}
       POSTGRES_DB: ${POSTGRES_DB:-databix_hot}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Set JWT_SECRET_KEY in env file}
       MONGODB_URI: ${MONGODB_URI:-}
       MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
-      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-secretpassword}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in env file}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-databix_cold}
       REDIS_URL: ${REDIS_URL:-redis://redis_cache:6379/0}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in env file}
+      AUTH_SIGNUP_ENABLED: ${AUTH_SIGNUP_ENABLED:-false}
+      API_DOCS_ENABLED: ${API_DOCS_ENABLED:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     volumes:
       - ./backend_data:/app/data
       - ./datafiles:/app/datafiles:ro
@@ -86,16 +94,15 @@ services:
   postgres_db:
     image: postgres:16-alpine
     container_name: postgres_db
-    #ports:
-      # Exposes port 5432 to local network for DBeaver/pgAdmin to connect safely
-     # - "5432:5432"
     ports:
-      # If POSTGRES_PORT is set to "127.0.0.1:5432:5432", it only allows your local computer to connect.
-      # In production, you can set it to "5432" to bind internally, or rely completely on Docker's private bridge network.
+      # Host binding for local tools such as DBeaver/pgAdmin. Keep the 127.0.0.1
+      # prefix: a bare port such as "5432" publishes on every host interface, and
+      # Docker's published ports bypass host firewalls such as ufw. Services reach
+      # the database over the Compose network, so production can drop this entry.
       - "${POSTGRES_PORT_BINDING:-127.0.0.1:5432:5432}"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgre}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secretpass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in env file}
       POSTGRES_DB: ${POSTGRES_DB:-databix_hot}
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
@@ -106,13 +113,15 @@ services:
       retries: 5
 
   mongodb:
-    image: mongo:latest
+    # Matches the major version `mongo:latest` resolved to, so existing data
+    # directories keep working.
+    image: mongo:9.0
     container_name: mongo_db
     ports:
       - "127.0.0.1:27017:27017"
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-root}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-secretpassword}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in env file}
     volumes:
       - ./mongo_data:/data/db
     healthcheck:
@@ -122,12 +131,22 @@ services:
       retries: 10
 
   redis_cache:
-    image: redis:alpine
+    image: redis:8.10-alpine
     container_name: redis_cache
+    # Password-protected, and memory-capped so cached query pages cannot grow
+    # without bound; least-recently-used entries are evicted first.
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --maxmemory "$$REDIS_MAXMEMORY" --maxmemory-policy allkeys-lru
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in env file}
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in env file}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -136,30 +155,53 @@ services:
   #  TELEMETRY & OBSERVABILITY TIER (Grafana LGTM Engine Minimal Edition)
   # =========================================================================
   loki:
-    image: grafana/loki:latest
+    # Loki runs without authentication, so it is reachable only on the Compose
+    # network (Grafana and Alloy), not from the host.
+    image: grafana/loki:3.7
     container_name: telemetry_loki
-    ports:
-      - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
 
+  # Alloy needs read access to container metadata and logs. Instead of the raw
+  # Docker socket (equivalent to root on the host), it talks to a proxy that
+  # only allows GET requests to the containers API on an internal network.
+  docker_socket_proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    container_name: docker_socket_proxy
+    environment:
+      CONTAINERS: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker_api
+
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.20.1
     container_name: telemetry_collector
     ports:
       - "127.0.0.1:12345:12345"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./config.alloy:/etc/alloy/config.alloy
+      - ./config.alloy:/etc/alloy/config.alloy:ro
     command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
+    networks:
+      - default
+      - docker_api
     depends_on:
       - loki
+      - docker_socket_proxy
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.2
     container_name: telemetry_dashboard
     ports:
       - "127.0.0.1:3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in env file}
+      GF_USERS_ALLOW_SIGN_UP: "false"
     depends_on:
       - loki
+
+networks:
+  default: {}
+  docker_api:
+    internal: true

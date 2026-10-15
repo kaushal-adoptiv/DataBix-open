@@ -15,7 +15,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 DATABASE_URL = os.getenv("DATABASE_URL") or URL.create(
     "postgresql+psycopg",
     username=os.getenv("POSTGRES_USER", "postgre"),
-    password=os.getenv("POSTGRES_PASSWORD", "secretpass"),
+    password=os.getenv("POSTGRES_PASSWORD"),
     host=os.getenv("POSTGRES_HOST", "localhost"),
     port=int(os.getenv("POSTGRES_PORT", "5432")),
     database=os.getenv("POSTGRES_DB", "databix_hot"),
@@ -59,19 +59,30 @@ def get_db() -> Generator[Session, None, None]:
 
 
 # 4. MongoDB Initialization Core
+# No credential defaults: missing secrets fail at connection time instead of
+# silently falling back to well-known passwords.
 MONGO_URI = os.getenv("MONGODB_URI") or None
 if MONGO_URI is None:
-    mongo_username = quote_plus(os.getenv("MONGO_ROOT_USERNAME", "root"), safe="")
-    mongo_password = quote_plus(os.getenv("MONGO_ROOT_PASSWORD", "secretpassword"), safe="")
-    MONGO_URI = f"mongodb://{mongo_username}:{mongo_password}@mongodb:27017"
+    mongo_username = os.getenv("MONGO_ROOT_USERNAME")
+    mongo_password = os.getenv("MONGO_ROOT_PASSWORD")
+    mongo_credentials = (
+        f"{quote_plus(mongo_username, safe='')}:{quote_plus(mongo_password, safe='')}@"
+        if mongo_username and mongo_password
+        else ""
+    )
+    MONGO_URI = f"mongodb://{mongo_credentials}mongodb:27017"
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "databix")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+# A password embedded in REDIS_URL takes precedence over REDIS_PASSWORD.
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD") or None
 
 mongo_client: MongoClient = MongoClient(
     MONGO_URI,
     serverSelectionTimeoutMS=2000,
 )
-redis_client: Redis = Redis.from_url(REDIS_URL, decode_responses=True)
+redis_client: Redis = Redis.from_url(
+    REDIS_URL, password=REDIS_PASSWORD, decode_responses=True
+)
 
 
 def get_mongo_database() -> MongoDatabase:
